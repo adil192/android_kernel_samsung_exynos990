@@ -104,6 +104,26 @@ static inline void fscrypt_put_encryption_info(struct inode *inode)
 	return;
 }
 
+// CONFIG_FSCRYPT_SDP [
+static inline int fscrypt_get_encryption_key(struct inode *inode,
+						struct fscrypt_key *key)
+{
+	return -EOPNOTSUPP;
+}
+
+static inline int fscrypt_get_encryption_key_classified(struct inode *inode,
+						struct fscrypt_key *key)
+{
+	return -EOPNOTSUPP;
+}
+
+static inline int fscrypt_get_encryption_kek(struct inode *inode,
+						struct fscrypt_info *crypt_info,
+						struct fscrypt_key *kek)
+{
+	return -EOPNOTSUPP;
+}
+// ] CONFIG_FSCRYPT_SDP
  /* fname.c */
 static inline int fscrypt_setup_filename(struct inode *dir,
 					 const struct qstr *iname,
@@ -112,7 +132,7 @@ static inline int fscrypt_setup_filename(struct inode *dir,
 	if (IS_ENCRYPTED(dir))
 		return -EOPNOTSUPP;
 
-	memset(fname, 0, sizeof(*fname));
+	memset(fname, 0, sizeof(struct fscrypt_name));
 	fname->usr_fname = iname;
 	fname->disk_name.name = (unsigned char *)iname->name;
 	fname->disk_name.len = iname->len;
@@ -183,8 +203,8 @@ static inline int fscrypt_file_open(struct inode *inode, struct file *filp)
 	return 0;
 }
 
-static inline int __fscrypt_prepare_link(struct inode *inode, struct inode *dir,
-					 struct dentry *dentry)
+static inline int __fscrypt_prepare_link(struct inode *inode,
+					 struct inode *dir)
 {
 	return -EOPNOTSUPP;
 }
@@ -199,8 +219,7 @@ static inline int __fscrypt_prepare_rename(struct inode *old_dir,
 }
 
 static inline int __fscrypt_prepare_lookup(struct inode *dir,
-					   struct dentry *dentry,
-					   struct fscrypt_name *fname)
+					   struct dentry *dentry)
 {
 	return -EOPNOTSUPP;
 }
@@ -229,4 +248,17 @@ static inline const char *fscrypt_get_symlink(struct inode *inode,
 	return ERR_PTR(-EOPNOTSUPP);
 }
 
+static inline int fscrypt_disk_encrypted(const struct inode *inode)
+{
+	return 0;
+}
+
+static inline void fscrypt_set_bio(const struct inode *inode, struct bio *bio, u64 dun)
+{
+}
+
+static inline void *fscrypt_get_diskcipher(const struct inode *inode)
+{
+	return NULL;
+}
 #endif	/* _LINUX_FSCRYPT_NOTSUPP_H */

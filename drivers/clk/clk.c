@@ -40,17 +40,6 @@ static HLIST_HEAD(clk_root_list);
 static HLIST_HEAD(clk_orphan_list);
 static LIST_HEAD(clk_notifier_list);
 
-static struct hlist_head *all_lists[] = {
-	&clk_root_list,
-	&clk_orphan_list,
-	NULL,
-};
-
-static struct hlist_head *orphan_list[] = {
-	&clk_orphan_list,
-	NULL,
-};
-
 /***    private data structures    ***/
 
 struct clk_core {
@@ -112,11 +101,7 @@ static int clk_pm_runtime_get(struct clk_core *core)
 		return 0;
 
 	ret = pm_runtime_get_sync(core->dev);
-	if (ret < 0) {
-		pm_runtime_put_noidle(core->dev);
-		return ret;
-	}
-	return 0;
+	return ret < 0 ? ret : 0;
 }
 
 static void clk_pm_runtime_put(struct clk_core *core)
@@ -2621,13 +2606,24 @@ EXPORT_SYMBOL_GPL(clk_is_match);
 
 /***        debugfs support        ***/
 
-#ifdef CONFIG_DEBUG_FS
+#if defined(CONFIG_DEBUG_FS) && !defined(CONFIG_ARCH_EXYNOS)
 #include <linux/debugfs.h>
 
 static struct dentry *rootdir;
 static int inited = 0;
 static DEFINE_MUTEX(clk_debug_lock);
 static HLIST_HEAD(clk_debug_list);
+
+static struct hlist_head *all_lists[] = {
+	&clk_root_list,
+	&clk_orphan_list,
+	NULL,
+};
+
+static struct hlist_head *orphan_list[] = {
+	&clk_orphan_list,
+	NULL,
+};
 
 static void clk_summary_show_one(struct seq_file *s, struct clk_core *c,
 				 int level)
@@ -2815,19 +2811,19 @@ static void clk_debug_create_one(struct clk_core *core, struct dentry *pdentry)
 	root = debugfs_create_dir(core->name, pdentry);
 	core->dentry = root;
 
-	debugfs_create_ulong("clk_rate", 0444, root, &core->rate);
-	debugfs_create_ulong("clk_accuracy", 0444, root, &core->accuracy);
-	debugfs_create_u32("clk_phase", 0444, root, &core->phase);
-	debugfs_create_file("clk_flags", 0444, root, core, &clk_flags_fops);
-	debugfs_create_u32("clk_prepare_count", 0444, root, &core->prepare_count);
-	debugfs_create_u32("clk_enable_count", 0444, root, &core->enable_count);
-	debugfs_create_u32("clk_protect_count", 0444, root, &core->protect_count);
-	debugfs_create_u32("clk_notifier_count", 0444, root, &core->notifier_count);
-	debugfs_create_file("clk_duty_cycle", 0444, root, core,
+	debugfs_create_ulong("clk_rate", 0400, root, &core->rate);
+	debugfs_create_ulong("clk_accuracy", 0400, root, &core->accuracy);
+	debugfs_create_u32("clk_phase", 0400, root, &core->phase);
+	debugfs_create_file("clk_flags", 0400, root, core, &clk_flags_fops);
+	debugfs_create_u32("clk_prepare_count", 0400, root, &core->prepare_count);
+	debugfs_create_u32("clk_enable_count", 0400, root, &core->enable_count);
+	debugfs_create_u32("clk_protect_count", 0400, root, &core->protect_count);
+	debugfs_create_u32("clk_notifier_count", 0400, root, &core->notifier_count);
+	debugfs_create_file("clk_duty_cycle", 0400, root, core,
 			    &clk_duty_cycle_fops);
 
 	if (core->num_parents > 1)
-		debugfs_create_file("clk_possible_parents", 0444, root, core,
+		debugfs_create_file("clk_possible_parents", 0400, root, core,
 				    &possible_parents_fops);
 
 	if (core->ops->debug_init)
@@ -2883,13 +2879,13 @@ static int __init clk_debug_init(void)
 
 	rootdir = debugfs_create_dir("clk", NULL);
 
-	debugfs_create_file("clk_summary", 0444, rootdir, &all_lists,
+	debugfs_create_file("clk_summary", 0400, rootdir, &all_lists,
 			    &clk_summary_fops);
-	debugfs_create_file("clk_dump", 0444, rootdir, &all_lists,
+	debugfs_create_file("clk_dump", 0400, rootdir, &all_lists,
 			    &clk_dump_fops);
-	debugfs_create_file("clk_orphan_summary", 0444, rootdir, &orphan_list,
+	debugfs_create_file("clk_orphan_summary", 0400, rootdir, &orphan_list,
 			    &clk_summary_fops);
-	debugfs_create_file("clk_orphan_dump", 0444, rootdir, &orphan_list,
+	debugfs_create_file("clk_orphan_dump", 0400, rootdir, &orphan_list,
 			    &clk_dump_fops);
 
 	mutex_lock(&clk_debug_lock);
@@ -3070,17 +3066,11 @@ static int __clk_core_init(struct clk_core *core)
 	if (core->flags & CLK_IS_CRITICAL) {
 		unsigned long flags;
 
-		ret = clk_core_prepare(core);
-		if (ret)
-			goto out;
+		clk_core_prepare(core);
 
 		flags = clk_enable_lock();
-		ret = clk_core_enable(core);
+		clk_core_enable(core);
 		clk_enable_unlock(flags);
-		if (ret) {
-			clk_core_unprepare(core);
-			goto out;
-		}
 	}
 
 	/*
@@ -3109,9 +3099,6 @@ static int __clk_core_init(struct clk_core *core)
 out:
 	clk_pm_runtime_put(core);
 unlock:
-	if (ret)
-		hlist_del_init(&core->child_node);
-
 	clk_prepare_unlock();
 
 	if (!ret)
@@ -3328,34 +3315,6 @@ static const struct clk_ops clk_nodrv_ops = {
 	.set_parent	= clk_nodrv_set_parent,
 };
 
-static void clk_core_evict_parent_cache_subtree(struct clk_core *root,
-						struct clk_core *target)
-{
-	int i;
-	struct clk_core *child;
-
-	for (i = 0; i < root->num_parents; i++)
-		if (root->parents[i] == target)
-			root->parents[i] = NULL;
-
-	hlist_for_each_entry(child, &root->children, child_node)
-		clk_core_evict_parent_cache_subtree(child, target);
-}
-
-/* Remove this clk from all parent caches */
-static void clk_core_evict_parent_cache(struct clk_core *core)
-{
-	struct hlist_head **lists;
-	struct clk_core *root;
-
-	lockdep_assert_held(&prepare_lock);
-
-	for (lists = all_lists; *lists; lists++)
-		hlist_for_each_entry(root, *lists, child_node)
-			clk_core_evict_parent_cache_subtree(root, core);
-
-}
-
 /**
  * clk_unregister - unregister a currently registered clock
  * @clk: clock to unregister
@@ -3393,8 +3352,6 @@ void clk_unregister(struct clk *clk)
 					  child_node)
 			clk_core_set_parent_nolock(child, NULL);
 	}
-
-	clk_core_evict_parent_cache(clk->core);
 
 	hlist_del_init(&clk->core->child_node);
 

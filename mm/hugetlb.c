@@ -2918,22 +2918,6 @@ static unsigned int cpuset_mems_nr(unsigned int *array)
 }
 
 #ifdef CONFIG_SYSCTL
-static int proc_hugetlb_doulongvec_minmax(struct ctl_table *table, int write,
-					  void *buffer, size_t *length,
-					  loff_t *ppos, unsigned long *out)
-{
-	struct ctl_table dup_table;
-
-	/*
-	 * In order to avoid races with __do_proc_doulongvec_minmax(), we
-	 * can duplicate the @table and alter the duplicate of it.
-	 */
-	dup_table = *table;
-	dup_table.data = out;
-
-	return proc_doulongvec_minmax(&dup_table, write, buffer, length, ppos);
-}
-
 static int hugetlb_sysctl_handler_common(bool obey_mempolicy,
 			 struct ctl_table *table, int write,
 			 void __user *buffer, size_t *length, loff_t *ppos)
@@ -2945,8 +2929,9 @@ static int hugetlb_sysctl_handler_common(bool obey_mempolicy,
 	if (!hugepages_supported())
 		return -EOPNOTSUPP;
 
-	ret = proc_hugetlb_doulongvec_minmax(table, write, buffer, length, ppos,
-					     &tmp);
+	table->data = &tmp;
+	table->maxlen = sizeof(unsigned long);
+	ret = proc_doulongvec_minmax(table, write, buffer, length, ppos);
 	if (ret)
 		goto out;
 
@@ -2990,8 +2975,9 @@ int hugetlb_overcommit_handler(struct ctl_table *table, int write,
 	if (write && hstate_is_gigantic(h))
 		return -EINVAL;
 
-	ret = proc_hugetlb_doulongvec_minmax(table, write, buffer, length, ppos,
-					     &tmp);
+	table->data = &tmp;
+	table->maxlen = sizeof(unsigned long);
+	ret = proc_doulongvec_minmax(table, write, buffer, length, ppos);
 	if (ret)
 		goto out;
 
@@ -3799,6 +3785,8 @@ retry:
 				.vma = vma,
 				.address = haddr,
 				.flags = flags,
+				.vma_flags = vma->vm_flags,
+				.vma_page_prot = vma->vm_page_prot,
 				/*
 				 * Hard to debug if it ends up being
 				 * used by a callee that assumes
@@ -4664,21 +4652,25 @@ static bool vma_shareable(struct vm_area_struct *vma, unsigned long addr)
 void adjust_range_if_pmd_sharing_possible(struct vm_area_struct *vma,
 				unsigned long *start, unsigned long *end)
 {
-	unsigned long a_start, a_end;
+	unsigned long check_addr = *start;
 
 	if (!(vma->vm_flags & VM_MAYSHARE))
 		return;
 
-	/* Extend the range to be PUD aligned for a worst case scenario */
-	a_start = ALIGN_DOWN(*start, PUD_SIZE);
-	a_end = ALIGN(*end, PUD_SIZE);
+	for (check_addr = *start; check_addr < *end; check_addr += PUD_SIZE) {
+		unsigned long a_start = check_addr & PUD_MASK;
+		unsigned long a_end = a_start + PUD_SIZE;
 
-	/*
-	 * Intersect the range with the vma range, since pmd sharing won't be
-	 * across vma after all
-	 */
-	*start = max(vma->vm_start, a_start);
-	*end = min(vma->vm_end, a_end);
+		/*
+		 * If sharing is possible, adjust start/end if necessary.
+		 */
+		if (range_in_vma(vma, a_start, a_end)) {
+			if (a_start < *start)
+				*start = a_start;
+			if (a_end > *end)
+				*end = a_end;
+		}
+	}
 }
 
 /*
@@ -4830,8 +4822,8 @@ pte_t *huge_pte_offset(struct mm_struct *mm,
 {
 	pgd_t *pgd;
 	p4d_t *p4d;
-	pud_t *pud, pud_entry;
-	pmd_t *pmd, pmd_entry;
+	pud_t *pud;
+	pmd_t *pmd;
 
 	pgd = pgd_offset(mm, addr);
 	if (!pgd_present(*pgd))
@@ -4841,19 +4833,17 @@ pte_t *huge_pte_offset(struct mm_struct *mm,
 		return NULL;
 
 	pud = pud_offset(p4d, addr);
-	pud_entry = READ_ONCE(*pud);
-	if (sz != PUD_SIZE && pud_none(pud_entry))
+	if (sz != PUD_SIZE && pud_none(*pud))
 		return NULL;
 	/* hugepage or swap? */
-	if (pud_huge(pud_entry) || !pud_present(pud_entry))
+	if (pud_huge(*pud) || !pud_present(*pud))
 		return (pte_t *)pud;
 
 	pmd = pmd_offset(pud, addr);
-	pmd_entry = READ_ONCE(*pmd);
-	if (sz != PMD_SIZE && pmd_none(pmd_entry))
+	if (sz != PMD_SIZE && pmd_none(*pmd))
 		return NULL;
 	/* hugepage or swap? */
-	if (pmd_huge(pmd_entry) || !pmd_present(pmd_entry))
+	if (pmd_huge(*pmd) || !pmd_present(*pmd))
 		return (pte_t *)pmd;
 
 	return NULL;

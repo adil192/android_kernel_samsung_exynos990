@@ -252,7 +252,6 @@ static inline u64 native_x2apic_icr_read(void)
 
 extern int x2apic_mode;
 extern int x2apic_phys;
-extern void __init x2apic_set_max_apicid(u32 apicid);
 extern void __init check_x2apic(void);
 extern void x2apic_setup(void);
 static inline int x2apic_enabled(void)
@@ -447,14 +446,6 @@ static inline void ack_APIC_irq(void)
 	 * ... yummie.
 	 */
 	apic_eoi();
-}
-
-
-static inline bool lapic_vector_set_in_irr(unsigned int vector)
-{
-	u32 irr = apic_read(APIC_IRR + (vector / 32 * 0x10));
-
-	return !!(irr & (1U << (vector % 32)));
 }
 
 static inline unsigned default_get_apic_id(unsigned long x)

@@ -928,29 +928,24 @@ static int rx_queue_add_kobject(struct net_device *dev, int index)
 	struct kobject *kobj = &queue->kobj;
 	int error = 0;
 
-	/* Kobject_put later will trigger rx_queue_release call which
-	 * decreases dev refcount: Take that reference here
-	 */
-	dev_hold(queue->dev);
-
 	kobj->kset = dev->queues_kset;
 	error = kobject_init_and_add(kobj, &rx_queue_ktype, NULL,
 				     "rx-%u", index);
 	if (error)
-		goto err;
+		return error;
+
+	dev_hold(queue->dev);
 
 	if (dev->sysfs_rx_queue_group) {
 		error = sysfs_create_group(kobj, dev->sysfs_rx_queue_group);
-		if (error)
-			goto err;
+		if (error) {
+			kobject_put(kobj);
+			return error;
+		}
 	}
 
 	kobject_uevent(kobj, KOBJ_ADD);
 
-	return error;
-
-err:
-	kobject_put(kobj);
 	return error;
 }
 #endif /* CONFIG_SYSFS */
@@ -1045,7 +1040,7 @@ static ssize_t tx_timeout_show(struct netdev_queue *queue, char *buf)
 	trans_timeout = queue->trans_timeout;
 	spin_unlock_irq(&queue->_xmit_lock);
 
-	return sprintf(buf, fmt_ulong, trans_timeout);
+	return sprintf(buf, "%lu", trans_timeout);
 }
 
 static unsigned int get_netdev_queue_index(struct netdev_queue *queue)
@@ -1472,29 +1467,25 @@ static int netdev_queue_add_kobject(struct net_device *dev, int index)
 	struct kobject *kobj = &queue->kobj;
 	int error = 0;
 
-	/* Kobject_put later will trigger netdev_queue_release call
-	 * which decreases dev refcount: Take that reference here
-	 */
-	dev_hold(queue->dev);
-
 	kobj->kset = dev->queues_kset;
 	error = kobject_init_and_add(kobj, &netdev_queue_ktype, NULL,
 				     "tx-%u", index);
 	if (error)
-		goto err;
+		return error;
+
+	dev_hold(queue->dev);
 
 #ifdef CONFIG_BQL
 	error = sysfs_create_group(kobj, &dql_group);
-	if (error)
-		goto err;
+	if (error) {
+		kobject_put(kobj);
+		return error;
+	}
 #endif
 
 	kobject_uevent(kobj, KOBJ_ADD);
-	return 0;
 
-err:
-	kobject_put(kobj);
-	return error;
+	return 0;
 }
 #endif /* CONFIG_SYSFS */
 

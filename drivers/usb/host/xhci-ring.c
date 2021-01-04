@@ -306,6 +306,9 @@ static void xhci_handle_stopped_cmd_ring(struct xhci_hcd *xhci,
 {
 	struct xhci_command *i_cmd;
 
+#ifdef CONFIG_USB_DEBUG_DETAILED_LOG
+	xhci_info(xhci, "%s \n", __func__);
+#endif
 	/* Turn all aborted commands in list to no-ops, then restart */
 	list_for_each_entry(i_cmd, &xhci->cmd_list, cmd_list) {
 
@@ -313,10 +316,13 @@ static void xhci_handle_stopped_cmd_ring(struct xhci_hcd *xhci,
 			continue;
 
 		i_cmd->status = COMP_COMMAND_RING_STOPPED;
-
+#ifdef CONFIG_USB_DEBUG_DETAILED_LOG
+		xhci_info(xhci, "Turn aborted command %p to no-op\n",
+			 i_cmd->command_trb);
+#else
 		xhci_dbg(xhci, "Turn aborted command %p to no-op\n",
 			 i_cmd->command_trb);
-
+#endif
 		trb_to_noop(i_cmd->command_trb, TRB_CMD_NOOP);
 
 		/*
@@ -342,8 +348,11 @@ static int xhci_abort_cmd_ring(struct xhci_hcd *xhci, unsigned long flags)
 	u64 temp_64;
 	int ret;
 
+#ifdef CONFIG_USB_DEBUG_DETAILED_LOG
+	xhci_info(xhci, "Abort command ring\n");
+#else
 	xhci_dbg(xhci, "Abort command ring\n");
-
+#endif
 	reinit_completion(&xhci->cmd_ring_stop_completion);
 
 	temp_64 = xhci_read_64(xhci, &xhci->op_regs->cmd_ring);
@@ -357,7 +366,7 @@ static int xhci_abort_cmd_ring(struct xhci_hcd *xhci, unsigned long flags)
 	 * and try to recover a -ETIMEDOUT with a host controller reset.
 	 */
 	ret = xhci_handshake(&xhci->op_regs->cmd_ring,
-			CMD_RING_RUNNING, 0, 5 * 1000 * 1000);
+			CMD_RING_RUNNING, 0, 5 * 100 * 1000);
 	if (ret < 0) {
 		xhci_err(xhci, "Abort failed to stop command ring: %d\n", ret);
 		xhci_halt(xhci);
@@ -375,8 +384,25 @@ static int xhci_abort_cmd_ring(struct xhci_hcd *xhci, unsigned long flags)
 					  msecs_to_jiffies(2000));
 	spin_lock_irqsave(&xhci->lock, flags);
 	if (!ret) {
+#ifdef CONFIG_USB_DEBUG_DETAILED_LOG
+		xhci_info(xhci, "No stop event for abort, ring start fail?\n");
+#else
 		xhci_dbg(xhci, "No stop event for abort, ring start fail?\n");
+#endif
+#if defined(CONFIG_USB_HOST_SAMSUNG_FEATURE)
+		cancel_delayed_work(&xhci->cmd_timer);
+#endif
 		xhci_cleanup_command_queue(xhci);
+#if defined(CONFIG_USB_HOST_SAMSUNG_FEATURE)
+		xhci->current_cmd = NULL;
+#endif
+#ifdef CONFIG_USB_DEBUG_DETAILED_LOG
+		xhci_info(xhci, "xhci->xhc_state 0x%x\n", xhci->xhc_state);
+#endif
+#ifdef CONFIG_USB_DWC3_EXYNOS
+		/* Checking timeout error to reset timeout_cnt. */
+		return ret;
+#endif
 	} else {
 		xhci_handle_stopped_cmd_ring(xhci, xhci_next_queued_cmd(xhci));
 	}
@@ -619,6 +645,9 @@ static void td_to_noop(struct xhci_hcd *xhci, struct xhci_ring *ep_ring,
 static void xhci_stop_watchdog_timer_in_irq(struct xhci_hcd *xhci,
 		struct xhci_virt_ep *ep)
 {
+#ifdef CONFIG_USB_DEBUG_DETAILED_LOG
+	xhci_info(xhci, "%s", __func__);
+#endif
 	ep->ep_state &= ~EP_STOP_CMD_PENDING;
 	/* Can't del_timer_sync in interrupt */
 	del_timer(&ep->stop_cmd_timer);
@@ -951,7 +980,11 @@ void xhci_stop_endpoint_command_watchdog(struct timer_list *t)
 	if (!(ep->ep_state & EP_STOP_CMD_PENDING) ||
 	    timer_pending(&ep->stop_cmd_timer)) {
 		spin_unlock_irqrestore(&xhci->lock, flags);
+#ifdef CONFIG_USB_DEBUG_DETAILED_LOG
+		xhci_err(xhci, "Stop EP timer raced with cmd completion, exit");
+#else
 		xhci_dbg(xhci, "Stop EP timer raced with cmd completion, exit");
+#endif
 		return;
 	}
 
@@ -1159,6 +1192,10 @@ static void xhci_handle_cmd_reset_ep(struct xhci_hcd *xhci, int slot_id,
 		/* Clear our internal halted state */
 		xhci->devs[slot_id]->eps[ep_index].ep_state &= ~EP_HALTED;
 	}
+
+	/* if this was a soft reset, then restart */
+	if ((le32_to_cpu(trb->generic.field[3])) & TRB_TSP)
+		ring_doorbell_for_active_rings(xhci, slot_id, ep_index);
 }
 
 static void xhci_handle_cmd_enable_slot(struct xhci_hcd *xhci, int slot_id,
@@ -1309,9 +1346,14 @@ void xhci_handle_command_timeout(struct work_struct *work)
 	struct xhci_hcd *xhci;
 	unsigned long flags;
 	u64 hw_ring_state;
+#ifdef CONFIG_USB_DWC3_EXYNOS
+	static int timeout_cnt = 0;
+#endif
 
 	xhci = container_of(to_delayed_work(work), struct xhci_hcd, cmd_timer);
-
+#ifdef CONFIG_USB_DEBUG_DETAILED_LOG
+	xhci_err(xhci, "++++ %s\n", __func__);
+#endif
 	spin_lock_irqsave(&xhci->lock, flags);
 
 	/*
@@ -1337,7 +1379,12 @@ void xhci_handle_command_timeout(struct work_struct *work)
 		/* Prevent new doorbell, and start command abort */
 		xhci->cmd_ring_state = CMD_RING_STATE_ABORTED;
 		xhci_dbg(xhci, "Command timeout\n");
+#ifdef CONFIG_USB_DWC3_EXYNOS
+		if (!xhci_abort_cmd_ring(xhci, flags))
+			timeout_cnt = 0;
+#else /* Original code */
 		xhci_abort_cmd_ring(xhci, flags);
+#endif
 		goto time_out_completed;
 	}
 
@@ -1349,12 +1396,26 @@ void xhci_handle_command_timeout(struct work_struct *work)
 		goto time_out_completed;
 	}
 
+#ifdef CONFIG_USB_DWC3_EXYNOS
+	timeout_cnt++;
+	if (timeout_cnt >= 3) {
+		xhci_err(xhci, "Command timeout count is expired.");
+		xhci_halt(xhci);
+		xhci_hc_died(xhci);
+		timeout_cnt = 0;
+		goto time_out_completed;
+	}
+#endif
+
 	/* command timeout on stopped ring, ring can't be aborted */
 	xhci_dbg(xhci, "Command timeout on stopped ring\n");
 	xhci_handle_stopped_cmd_ring(xhci, xhci->current_cmd);
 
 time_out_completed:
 	spin_unlock_irqrestore(&xhci->lock, flags);
+#ifdef CONFIG_USB_DEBUG_DETAILED_LOG
+	xhci_err(xhci, "---- %s\n", __func__);
+#endif
 	return;
 }
 
@@ -1609,6 +1670,7 @@ static void handle_port_status(struct xhci_hcd *xhci,
 		slot_id = xhci_find_slot_id_by_port(hcd, xhci, hcd_portnum + 1);
 		if (slot_id && xhci->devs[slot_id])
 			xhci->devs[slot_id]->flags |= VDEV_PORT_ERROR;
+		bus_state->port_remote_wakeup &= ~(1 << hcd_portnum);
 	}
 
 	if ((portsc & PORT_PLC) && (portsc & PORT_PLS_MASK) == XDEV_RESUME) {
@@ -1629,7 +1691,6 @@ static void handle_port_status(struct xhci_hcd *xhci,
 			bus_state->port_remote_wakeup |= 1 << hcd_portnum;
 			xhci_test_and_clear_bit(xhci, port, PORT_PLC);
 			xhci_set_link_state(xhci, port, XDEV_U0);
-			usb_hcd_start_port_resume(&hcd->self, hcd_portnum);
 			/* Need to wait until the next link state change
 			 * indicates the device is actually in U0.
 			 */
@@ -1669,6 +1730,7 @@ static void handle_port_status(struct xhci_hcd *xhci,
 		if (slot_id && xhci->devs[slot_id])
 			xhci_ring_device(xhci, slot_id);
 		if (bus_state->port_remote_wakeup & (1 << hcd_portnum)) {
+			bus_state->port_remote_wakeup &= ~(1 << hcd_portnum);
 			xhci_test_and_clear_bit(xhci, port, PORT_PLC);
 			usb_wakeup_notification(hcd->self.root_hub,
 					hcd_portnum + 1);
@@ -2192,10 +2254,16 @@ static int process_bulk_intr_td(struct xhci_hcd *xhci, struct xhci_td *td,
 	union xhci_trb *ep_trb, struct xhci_transfer_event *event,
 	struct xhci_virt_ep *ep, int *status)
 {
+	struct xhci_slot_ctx *slot_ctx;
 	struct xhci_ring *ep_ring;
 	u32 trb_comp_code;
 	u32 remaining, requested, ep_trb_len;
+	unsigned int slot_id;
+	int ep_index;
 
+	slot_id = TRB_TO_SLOT_ID(le32_to_cpu(event->flags));
+	slot_ctx = xhci_get_slot_ctx(xhci, xhci->devs[slot_id]->out_ctx);
+	ep_index = TRB_TO_EP_ID(le32_to_cpu(event->flags)) - 1;
 	ep_ring = xhci_dma_to_transfer_ring(ep, le64_to_cpu(event->buffer));
 	trb_comp_code = GET_COMP_CODE(le32_to_cpu(event->transfer_len));
 	remaining = EVENT_TRB_LEN(le32_to_cpu(event->transfer_len));
@@ -2204,6 +2272,7 @@ static int process_bulk_intr_td(struct xhci_hcd *xhci, struct xhci_td *td,
 
 	switch (trb_comp_code) {
 	case COMP_SUCCESS:
+		ep_ring->err_count = 0;
 		/* handle success with untransferred data as short packet */
 		if (ep_trb != td->last_trb || remaining) {
 			xhci_warn(xhci, "WARN Successful completion on short TX\n");
@@ -2227,6 +2296,14 @@ static int process_bulk_intr_td(struct xhci_hcd *xhci, struct xhci_td *td,
 		ep_trb_len	= 0;
 		remaining	= 0;
 		break;
+	case COMP_USB_TRANSACTION_ERROR:
+		if ((ep_ring->err_count++ > MAX_SOFT_RETRY) ||
+		    le32_to_cpu(slot_ctx->tt_info) & TT_SLOT)
+			break;
+		*status = 0;
+		xhci_cleanup_halted_endpoint(xhci, slot_id, ep_index,
+					ep_ring->stream_id, td, EP_SOFT_RESET);
+		return 0;
 	default:
 		/* do nothing */
 		break;
@@ -2329,8 +2406,7 @@ static int handle_tx_event(struct xhci_hcd *xhci,
 	case COMP_SUCCESS:
 		if (EVENT_TRB_LEN(le32_to_cpu(event->transfer_len)) == 0)
 			break;
-		if (xhci->quirks & XHCI_TRUST_TX_LENGTH ||
-		    ep_ring->last_td_was_short)
+		if (xhci->quirks & XHCI_TRUST_TX_LENGTH)
 			trb_comp_code = COMP_SHORT_PACKET;
 		else
 			xhci_warn_ratelimited(xhci,
@@ -2693,42 +2769,6 @@ static int xhci_handle_event(struct xhci_hcd *xhci)
 }
 
 /*
- * Update Event Ring Dequeue Pointer:
- * - When all events have finished
- * - To avoid "Event Ring Full Error" condition
- */
-static void xhci_update_erst_dequeue(struct xhci_hcd *xhci,
-		union xhci_trb *event_ring_deq)
-{
-	u64 temp_64;
-	dma_addr_t deq;
-
-	temp_64 = xhci_read_64(xhci, &xhci->ir_set->erst_dequeue);
-	/* If necessary, update the HW's version of the event ring deq ptr. */
-	if (event_ring_deq != xhci->event_ring->dequeue) {
-		deq = xhci_trb_virt_to_dma(xhci->event_ring->deq_seg,
-				xhci->event_ring->dequeue);
-		if (deq == 0)
-			xhci_warn(xhci, "WARN something wrong with SW event ring dequeue ptr\n");
-		/*
-		 * Per 4.9.4, Software writes to the ERDP register shall
-		 * always advance the Event Ring Dequeue Pointer value.
-		 */
-		if ((temp_64 & (u64) ~ERST_PTR_MASK) ==
-				((u64) deq & (u64) ~ERST_PTR_MASK))
-			return;
-
-		/* Update HC event ring dequeue pointer */
-		temp_64 &= ERST_PTR_MASK;
-		temp_64 |= ((u64) deq & (u64) ~ERST_PTR_MASK);
-	}
-
-	/* Clear the event handler busy flag (RW1C) */
-	temp_64 |= ERST_EHB;
-	xhci_write_64(xhci, temp_64, &xhci->ir_set->erst_dequeue);
-}
-
-/*
  * xHCI spec says we can get an interrupt, and if the HC has an error condition,
  * we might get bad data out of the event ring.  Section 4.10.2.7 has a list of
  * indicators of an event TRB error, but we check the status *first* to be safe.
@@ -2739,9 +2779,9 @@ irqreturn_t xhci_irq(struct usb_hcd *hcd)
 	union xhci_trb *event_ring_deq;
 	irqreturn_t ret = IRQ_NONE;
 	unsigned long flags;
+	dma_addr_t deq;
 	u64 temp_64;
 	u32 status;
-	int event_loop = 0;
 
 	spin_lock_irqsave(&xhci->lock, flags);
 	/* Check if the xHC generated the interrupt, or the irq is shared */
@@ -2795,14 +2835,24 @@ irqreturn_t xhci_irq(struct usb_hcd *hcd)
 	/* FIXME this should be a delayed service routine
 	 * that clears the EHB.
 	 */
-	while (xhci_handle_event(xhci) > 0) {
-		if (event_loop++ < TRBS_PER_SEGMENT / 2)
-			continue;
-		xhci_update_erst_dequeue(xhci, event_ring_deq);
-		event_loop = 0;
+	while (xhci_handle_event(xhci) > 0) {}
+
+	temp_64 = xhci_read_64(xhci, &xhci->ir_set->erst_dequeue);
+	/* If necessary, update the HW's version of the event ring deq ptr. */
+	if (event_ring_deq != xhci->event_ring->dequeue) {
+		deq = xhci_trb_virt_to_dma(xhci->event_ring->deq_seg,
+				xhci->event_ring->dequeue);
+		if (deq == 0)
+			xhci_warn(xhci, "WARN something wrong with SW event "
+					"ring dequeue ptr.\n");
+		/* Update HC event ring dequeue pointer */
+		temp_64 &= ERST_PTR_MASK;
+		temp_64 |= ((u64) deq & (u64) ~ERST_PTR_MASK);
 	}
 
-	xhci_update_erst_dequeue(xhci, event_ring_deq);
+	/* Clear the event handler busy flag (RW1C); event ring is empty. */
+	temp_64 |= ERST_EHB;
+	xhci_write_64(xhci, temp_64, &xhci->ir_set->erst_dequeue);
 	ret = IRQ_HANDLED;
 
 out:
@@ -3331,8 +3381,8 @@ int xhci_queue_bulk_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 			/* New sg entry */
 			--num_sgs;
 			sent_len -= block_len;
-			sg = sg_next(sg);
-			if (num_sgs != 0 && sg) {
+			if (num_sgs != 0) {
+				sg = sg_next(sg);
 				block_len = sg_dma_len(sg);
 				addr = (u64) sg_dma_address(sg);
 				addr += sent_len;

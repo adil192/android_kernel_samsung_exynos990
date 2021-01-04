@@ -302,6 +302,10 @@ static struct scsi_device *scsi_alloc_sdev(struct scsi_target *starget,
 			goto out_device_destroy;
 		}
 	}
+#ifdef CONFIG_BLK_TURBO_WRITE
+		if (shost->by_ufs)
+			scsi_alloc_tw(sdev);
+#endif
 
 	return sdev;
 
@@ -1722,16 +1726,15 @@ static void scsi_sysfs_add_devices(struct Scsi_Host *shost)
  */
 static struct async_scan_data *scsi_prep_async_scan(struct Scsi_Host *shost)
 {
-	struct async_scan_data *data = NULL;
+	struct async_scan_data *data;
 	unsigned long flags;
 
 	if (strncmp(scsi_scan_type, "sync", 4) == 0)
 		return NULL;
 
-	mutex_lock(&shost->scan_mutex);
 	if (shost->async_scan) {
 		shost_printk(KERN_DEBUG, shost, "%s called twice\n", __func__);
-		goto err;
+		return NULL;
 	}
 
 	data = kmalloc(sizeof(*data), GFP_KERNEL);
@@ -1742,6 +1745,7 @@ static struct async_scan_data *scsi_prep_async_scan(struct Scsi_Host *shost)
 		goto err;
 	init_completion(&data->prev_finished);
 
+	mutex_lock(&shost->scan_mutex);
 	spin_lock_irqsave(shost->host_lock, flags);
 	shost->async_scan = 1;
 	spin_unlock_irqrestore(shost->host_lock, flags);
@@ -1756,7 +1760,6 @@ static struct async_scan_data *scsi_prep_async_scan(struct Scsi_Host *shost)
 	return data;
 
  err:
-	mutex_unlock(&shost->scan_mutex);
 	kfree(data);
 	return NULL;
 }

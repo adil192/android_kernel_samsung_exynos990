@@ -709,17 +709,11 @@ static noinline int create_subvol(struct inode *dir,
 
 	btrfs_i_size_write(BTRFS_I(dir), dir->i_size + namelen * 2);
 	ret = btrfs_update_inode(trans, root, dir);
-	if (ret) {
-		btrfs_abort_transaction(trans, ret);
-		goto fail;
-	}
+	BUG_ON(ret);
 
 	ret = btrfs_add_root_ref(trans, objectid, root->root_key.objectid,
 				 btrfs_ino(BTRFS_I(dir)), index, name, namelen);
-	if (ret) {
-		btrfs_abort_transaction(trans, ret);
-		goto fail;
-	}
+	BUG_ON(ret);
 
 	ret = btrfs_uuid_tree_add(trans, root_item->uuid,
 				  BTRFS_UUID_KEY_SUBVOL, objectid);
@@ -1239,7 +1233,6 @@ static int cluster_pages_for_defrag(struct inode *inode,
 	u64 page_start;
 	u64 page_end;
 	u64 page_cnt;
-	u64 start = (u64)start_index << PAGE_SHIFT;
 	int ret;
 	int i;
 	int i_done;
@@ -1256,7 +1249,8 @@ static int cluster_pages_for_defrag(struct inode *inode,
 	page_cnt = min_t(u64, (u64)num_pages, (u64)file_end - start_index + 1);
 
 	ret = btrfs_delalloc_reserve_space(inode, &data_reserved,
-			start, page_cnt << PAGE_SHIFT);
+			start_index << PAGE_SHIFT,
+			page_cnt << PAGE_SHIFT);
 	if (ret)
 		return ret;
 	i_done = 0;
@@ -1346,7 +1340,8 @@ again:
 		btrfs_mod_outstanding_extents(BTRFS_I(inode), 1);
 		spin_unlock(&BTRFS_I(inode)->lock);
 		btrfs_delalloc_release_space(inode, data_reserved,
-				start, (page_cnt - i_done) << PAGE_SHIFT, true);
+				start_index << PAGE_SHIFT,
+				(page_cnt - i_done) << PAGE_SHIFT, true);
 	}
 
 
@@ -1373,7 +1368,8 @@ out:
 		put_page(pages[i]);
 	}
 	btrfs_delalloc_release_space(inode, data_reserved,
-			start, page_cnt << PAGE_SHIFT, true);
+			start_index << PAGE_SHIFT,
+			page_cnt << PAGE_SHIFT, true);
 	btrfs_delalloc_release_extents(BTRFS_I(inode), page_cnt << PAGE_SHIFT);
 	extent_changeset_free(data_reserved);
 	return ret;
@@ -1640,7 +1636,7 @@ static noinline int btrfs_ioctl_resize(struct file *file,
 		btrfs_info(fs_info, "resizing devid %llu", devid);
 	}
 
-	device = btrfs_find_device(fs_info->fs_devices, devid, NULL, NULL, true);
+	device = btrfs_find_device(fs_info, devid, NULL, NULL);
 	if (!device) {
 		btrfs_info(fs_info, "resizer unable to find device %llu",
 			   devid);
@@ -2077,14 +2073,9 @@ static noinline int copy_to_sk(struct btrfs_path *path,
 		sh.len = item_len;
 		sh.transid = found_transid;
 
-		/*
-		 * Copy search result header. If we fault then loop again so we
-		 * can fault in the pages and -EFAULT there if there's a
-		 * problem. Otherwise we'll fault and then copy the buffer in
-		 * properly this next time through
-		 */
-		if (probe_user_write(ubuf + *sk_offset, &sh, sizeof(sh))) {
-			ret = 0;
+		/* copy search result header */
+		if (copy_to_user(ubuf + *sk_offset, &sh, sizeof(sh))) {
+			ret = -EFAULT;
 			goto out;
 		}
 
@@ -2092,14 +2083,10 @@ static noinline int copy_to_sk(struct btrfs_path *path,
 
 		if (item_len) {
 			char __user *up = ubuf + *sk_offset;
-			/*
-			 * Copy the item, same behavior as above, but reset the
-			 * * sk_offset so we copy the full thing again.
-			 */
-			if (read_extent_buffer_to_user_nofault(leaf, up,
-						item_off, item_len)) {
-				ret = 0;
-				*sk_offset -= sizeof(sh);
+			/* copy the item */
+			if (read_extent_buffer_to_user(leaf, up,
+						       item_off, item_len)) {
+				ret = -EFAULT;
 				goto out;
 			}
 
@@ -2187,11 +2174,6 @@ static noinline int search_ioctl(struct inode *inode,
 	key.offset = sk->min_offset;
 
 	while (1) {
-		ret = fault_in_pages_writeable(ubuf + sk_offset,
-					       *buf_size - sk_offset);
-		if (ret)
-			break;
-
 		ret = btrfs_search_forward(root, &key, path, sk->min_transid);
 		if (ret != 0) {
 			if (ret > 0)
@@ -3190,8 +3172,7 @@ static long btrfs_ioctl_dev_info(struct btrfs_fs_info *fs_info,
 		s_uuid = di_args->uuid;
 
 	rcu_read_lock();
-	dev = btrfs_find_device(fs_info->fs_devices, di_args->devid, s_uuid,
-				NULL, true);
+	dev = btrfs_find_device(fs_info, di_args->devid, s_uuid, NULL);
 
 	if (!dev) {
 		ret = -ENODEV;
@@ -4215,8 +4196,6 @@ process_slot:
 			ret = -EINTR;
 			goto out;
 		}
-
-		cond_resched();
 	}
 	ret = 0;
 

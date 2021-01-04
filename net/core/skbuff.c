@@ -76,6 +76,9 @@
 #include <linux/highmem.h>
 #include <linux/capability.h>
 #include <linux/user_namespace.h>
+#if defined(CONFIG_CP_ZEROCOPY) || defined(CONFIG_CP_PKTPROC_V2)
+#include <soc/samsung/exynos-modem-ctrl.h>
+#endif
 
 struct kmem_cache *skbuff_head_cache __ro_after_init;
 static struct kmem_cache *skbuff_fclone_cache __ro_after_init;
@@ -536,7 +539,10 @@ static inline void skb_drop_fraglist(struct sk_buff *skb)
 	skb_drop_list(&skb_shinfo(skb)->frag_list);
 }
 
-static void skb_clone_fraglist(struct sk_buff *skb)
+#ifndef CONFIG_MPTCP
+static
+#endif
+void skb_clone_fraglist(struct sk_buff *skb)
 {
 	struct sk_buff *list;
 
@@ -547,6 +553,11 @@ static void skb_clone_fraglist(struct sk_buff *skb)
 static void skb_free_head(struct sk_buff *skb)
 {
 	unsigned char *head = skb->head;
+
+#if defined(CONFIG_CP_ZEROCOPY) || defined(CONFIG_CP_PKTPROC_V2)
+        if (skb_free_head_cp_zerocopy(skb))
+                return;
+#endif
 
 	if (skb->head_frag)
 		skb_free_frag(head);
@@ -4265,7 +4276,7 @@ struct sk_buff *sock_dequeue_err_skb(struct sock *sk)
 	if (skb && (skb_next = skb_peek(q))) {
 		icmp_next = is_icmp_err_skb(skb_next);
 		if (icmp_next)
-			sk->sk_err = SKB_EXT_ERR(skb_next)->ee.ee_errno;
+			sk->sk_err = SKB_EXT_ERR(skb_next)->ee.ee_origin;
 	}
 	spin_unlock_irqrestore(&q->lock, flags);
 
@@ -5128,8 +5139,8 @@ struct sk_buff *skb_vlan_untag(struct sk_buff *skb)
 	skb = skb_share_check(skb, GFP_ATOMIC);
 	if (unlikely(!skb))
 		goto err_free;
-	/* We may access the two bytes after vlan_hdr in vlan_set_encap_proto(). */
-	if (unlikely(!pskb_may_pull(skb, VLAN_HLEN + sizeof(unsigned short))))
+
+	if (unlikely(!pskb_may_pull(skb, VLAN_HLEN)))
 		goto err_free;
 
 	vhdr = (struct vlan_hdr *)skb->data;
@@ -5521,13 +5532,9 @@ static int pskb_carve_inside_nonlinear(struct sk_buff *skb, const u32 off,
 	if (skb_has_frag_list(skb))
 		skb_clone_fraglist(skb);
 
-	/* split line is in frag list */
-	if (k == 0 && pskb_carve_frag_list(skb, shinfo, off - pos, gfp_mask)) {
-		/* skb_frag_unref() is not needed here as shinfo->nr_frags = 0. */
-		if (skb_has_frag_list(skb))
-			kfree_skb_list(skb_shinfo(skb)->frag_list);
-		kfree(data);
-		return -ENOMEM;
+	if (k == 0) {
+		/* split line is in frag list */
+		pskb_carve_frag_list(skb, shinfo, off - pos, gfp_mask);
 	}
 	skb_release_data(skb);
 

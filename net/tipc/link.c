@@ -830,31 +830,18 @@ static int link_schedule_user(struct tipc_link *l, struct tipc_msg *hdr)
  */
 static void link_prepare_wakeup(struct tipc_link *l)
 {
-	struct sk_buff_head *wakeupq = &l->wakeupq;
-	struct sk_buff_head *inputq = l->inputq;
 	struct sk_buff *skb, *tmp;
-	struct sk_buff_head tmpq;
-	int avail[5] = {0,};
-	int imp = 0;
+	int imp, i = 0;
 
-	__skb_queue_head_init(&tmpq);
-
-	for (; imp <= TIPC_SYSTEM_IMPORTANCE; imp++)
-		avail[imp] = l->backlog[imp].limit - l->backlog[imp].len;
-
-	skb_queue_walk_safe(wakeupq, skb, tmp) {
+	skb_queue_walk_safe(&l->wakeupq, skb, tmp) {
 		imp = TIPC_SKB_CB(skb)->chain_imp;
-		if (avail[imp] <= 0)
-			continue;
-		avail[imp]--;
-		__skb_unlink(skb, wakeupq);
-		__skb_queue_tail(&tmpq, skb);
+		if (l->backlog[imp].len < l->backlog[imp].limit) {
+			skb_unlink(skb, &l->wakeupq);
+			skb_queue_tail(l->inputq, skb);
+		} else if (i++ > 10) {
+			break;
+		}
 	}
-
-	spin_lock_bh(&inputq->lock);
-	skb_queue_splice_tail(&tmpq, inputq);
-	spin_unlock_bh(&inputq->lock);
-
 }
 
 void tipc_link_reset(struct tipc_link *l)
@@ -928,7 +915,7 @@ int tipc_link_xmit(struct tipc_link *l, struct sk_buff_head *list,
 	int rc = 0;
 
 	if (unlikely(msg_size(hdr) > mtu)) {
-		__skb_queue_purge(list);
+		skb_queue_purge(list);
 		return -EMSGSIZE;
 	}
 
@@ -957,7 +944,7 @@ int tipc_link_xmit(struct tipc_link *l, struct sk_buff_head *list,
 		if (likely(skb_queue_len(transmq) < maxwin)) {
 			_skb = skb_clone(skb, GFP_ATOMIC);
 			if (!_skb) {
-				__skb_queue_purge(list);
+				skb_queue_purge(list);
 				return -ENOBUFS;
 			}
 			__skb_dequeue(list);
@@ -1127,7 +1114,7 @@ static bool tipc_data_input(struct tipc_link *l, struct sk_buff *skb,
 	default:
 		pr_warn("Dropping received illegal msg type\n");
 		kfree_skb(skb);
-		return true;
+		return false;
 	};
 }
 
@@ -1429,7 +1416,7 @@ void tipc_link_create_dummy_tnl_msg(struct tipc_link *l,
 	struct sk_buff *skb;
 	u32 dnode = l->addr;
 
-	__skb_queue_head_init(&tnlq);
+	skb_queue_head_init(&tnlq);
 	skb = tipc_msg_create(TUNNEL_PROTOCOL, FAILOVER_MSG,
 			      INT_H_SIZE, BASIC_H_SIZE,
 			      dnode, onode, 0, 0, 0);
@@ -1465,8 +1452,8 @@ void tipc_link_tnl_prepare(struct tipc_link *l, struct tipc_link *tnl,
 	if (!tnl)
 		return;
 
-	__skb_queue_head_init(&tnlq);
-	__skb_queue_head_init(&tmpxq);
+	skb_queue_head_init(&tnlq);
+	skb_queue_head_init(&tmpxq);
 
 	/* At least one packet required for safe algorithm => add dummy */
 	skb = tipc_msg_create(TIPC_LOW_IMPORTANCE, TIPC_DIRECT_MSG,
@@ -1476,7 +1463,7 @@ void tipc_link_tnl_prepare(struct tipc_link *l, struct tipc_link *tnl,
 		pr_warn("%sunable to create tunnel packet\n", link_co_err);
 		return;
 	}
-	__skb_queue_tail(&tnlq, skb);
+	skb_queue_tail(&tnlq, skb);
 	tipc_link_xmit(l, &tnlq, &tmpxq);
 	__skb_queue_purge(&tmpxq);
 

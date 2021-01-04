@@ -116,7 +116,7 @@ static void deferred_probe_work_func(struct work_struct *work)
 }
 static DECLARE_WORK(deferred_probe_work, deferred_probe_work_func);
 
-void driver_deferred_probe_add(struct device *dev)
+static void driver_deferred_probe_add(struct device *dev)
 {
 	mutex_lock(&deferred_probe_mutex);
 	if (list_empty(&dev->p->deferred_probe)) {
@@ -470,11 +470,7 @@ static int really_probe(struct device *dev, struct device_driver *drv)
 	atomic_inc(&probe_count);
 	pr_debug("bus: '%s': %s: probing driver %s with device %s\n",
 		 drv->bus->name, __func__, drv->name, dev_name(dev));
-	if (!list_empty(&dev->devres_head)) {
-		dev_crit(dev, "Resources present before probing\n");
-		ret = -EBUSY;
-		goto done;
-	}
+	WARN_ON(!list_empty(&dev->devres_head));
 
 re_probe:
 	dev->driver = drv;
@@ -580,7 +576,7 @@ pinctrl_bind_failed:
 	ret = 0;
 done:
 	atomic_dec(&probe_count);
-	wake_up_all(&probe_waitqueue);
+	wake_up(&probe_waitqueue);
 	return ret;
 }
 
@@ -793,9 +789,7 @@ static int __device_attach(struct device *dev, bool allow_async)
 	int ret = 0;
 
 	device_lock(dev);
-	if (dev->p->dead) {
-		goto out_unlock;
-	} else if (dev->driver) {
+	if (dev->driver) {
 		if (device_is_bound(dev)) {
 			ret = 1;
 			goto out_unlock;
@@ -931,8 +925,6 @@ static void __device_release_driver(struct device *dev, struct device *parent)
 
 	drv = dev->driver;
 	if (drv) {
-		pm_runtime_get_sync(dev);
-
 		while (device_links_busy(dev)) {
 			device_unlock(dev);
 			if (parent && dev->bus->need_parent_lock)
@@ -948,12 +940,11 @@ static void __device_release_driver(struct device *dev, struct device *parent)
 			 * have released the driver successfully while this one
 			 * was waiting, so check for that.
 			 */
-			if (dev->driver != drv) {
-				pm_runtime_put(dev);
+			if (dev->driver != drv)
 				return;
-			}
 		}
 
+		pm_runtime_get_sync(dev);
 		pm_runtime_clean_up_links(dev);
 
 		driver_sysfs_remove(dev);

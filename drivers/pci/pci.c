@@ -5039,42 +5039,39 @@ unlock:
 	return 0;
 }
 
-/*
- * Save and disable devices from the top of the tree down while holding
- * the @dev mutex lock for the entire tree.
- */
-static void pci_bus_save_and_disable_locked(struct pci_bus *bus)
+/* Save and disable devices from the top of the tree down */
+static void pci_bus_save_and_disable(struct pci_bus *bus)
 {
 	struct pci_dev *dev;
 
 	list_for_each_entry(dev, &bus->devices, bus_list) {
+		pci_dev_lock(dev);
 		pci_dev_save_and_disable(dev);
+		pci_dev_unlock(dev);
 		if (dev->subordinate)
-			pci_bus_save_and_disable_locked(dev->subordinate);
+			pci_bus_save_and_disable(dev->subordinate);
 	}
 }
 
 /*
- * Restore devices from top of the tree down while holding @dev mutex lock
- * for the entire tree.  Parent bridges need to be restored before we can
- * get to subordinate devices.
+ * Restore devices from top of the tree down - parent bridges need to be
+ * restored before we can get to subordinate devices.
  */
-static void pci_bus_restore_locked(struct pci_bus *bus)
+static void pci_bus_restore(struct pci_bus *bus)
 {
 	struct pci_dev *dev;
 
 	list_for_each_entry(dev, &bus->devices, bus_list) {
+		pci_dev_lock(dev);
 		pci_dev_restore(dev);
+		pci_dev_unlock(dev);
 		if (dev->subordinate)
-			pci_bus_restore_locked(dev->subordinate);
+			pci_bus_restore(dev->subordinate);
 	}
 }
 
-/*
- * Save and disable devices from the top of the tree down while holding
- * the @dev mutex lock for the entire tree.
- */
-static void pci_slot_save_and_disable_locked(struct pci_slot *slot)
+/* Save and disable devices from the top of the tree down */
+static void pci_slot_save_and_disable(struct pci_slot *slot)
 {
 	struct pci_dev *dev;
 
@@ -5083,25 +5080,26 @@ static void pci_slot_save_and_disable_locked(struct pci_slot *slot)
 			continue;
 		pci_dev_save_and_disable(dev);
 		if (dev->subordinate)
-			pci_bus_save_and_disable_locked(dev->subordinate);
+			pci_bus_save_and_disable(dev->subordinate);
 	}
 }
 
 /*
- * Restore devices from top of the tree down while holding @dev mutex lock
- * for the entire tree.  Parent bridges need to be restored before we can
- * get to subordinate devices.
+ * Restore devices from top of the tree down - parent bridges need to be
+ * restored before we can get to subordinate devices.
  */
-static void pci_slot_restore_locked(struct pci_slot *slot)
+static void pci_slot_restore(struct pci_slot *slot)
 {
 	struct pci_dev *dev;
 
 	list_for_each_entry(dev, &slot->bus->devices, bus_list) {
 		if (!dev->slot || dev->slot != slot)
 			continue;
+		pci_dev_lock(dev);
 		pci_dev_restore(dev);
+		pci_dev_unlock(dev);
 		if (dev->subordinate)
-			pci_bus_restore_locked(dev->subordinate);
+			pci_bus_restore(dev->subordinate);
 	}
 }
 
@@ -5160,14 +5158,16 @@ static int __pci_reset_slot(struct pci_slot *slot)
 	if (rc)
 		return rc;
 
+	pci_slot_save_and_disable(slot);
+
 	if (pci_slot_trylock(slot)) {
-		pci_slot_save_and_disable_locked(slot);
 		might_sleep();
 		rc = pci_reset_hotplug_slot(slot->hotplug, 0);
-		pci_slot_restore_locked(slot);
 		pci_slot_unlock(slot);
 	} else
 		rc = -EAGAIN;
+
+	pci_slot_restore(slot);
 
 	return rc;
 }
@@ -5254,14 +5254,16 @@ static int __pci_reset_bus(struct pci_bus *bus)
 	if (rc)
 		return rc;
 
+	pci_bus_save_and_disable(bus);
+
 	if (pci_bus_trylock(bus)) {
-		pci_bus_save_and_disable_locked(bus);
 		might_sleep();
 		rc = pci_bridge_secondary_bus_reset(bus->self);
-		pci_bus_restore_locked(bus);
 		pci_bus_unlock(bus);
 	} else
 		rc = -EAGAIN;
+
+	pci_bus_restore(bus);
 
 	return rc;
 }
@@ -5840,21 +5842,19 @@ static resource_size_t pci_specified_resource_alignment(struct pci_dev *dev,
 	while (*p) {
 		count = 0;
 		if (sscanf(p, "%d%n", &align_order, &count) == 1 &&
-		    p[count] == '@') {
+							p[count] == '@') {
 			p += count + 1;
-			if (align_order > 63) {
-				pr_err("PCI: Invalid requested alignment (order %d)\n",
-				       align_order);
-				align_order = PAGE_SHIFT;
-			}
 		} else {
-			align_order = PAGE_SHIFT;
+			align_order = -1;
 		}
 
 		ret = pci_dev_str_match(dev, p, &p);
 		if (ret == 1) {
 			*resize = true;
-			align = 1ULL << align_order;
+			if (align_order == -1)
+				align = PAGE_SIZE;
+			else
+				align = 1 << align_order;
 			break;
 		} else if (ret < 0) {
 			pr_err("PCI: Can't parse resource_alignment parameter: %s\n",

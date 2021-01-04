@@ -68,6 +68,10 @@
 #include <asm/pgtable.h>
 #include <asm/mmu_context.h>
 
+#ifdef CONFIG_SECURITY_DEFEX
+#include <linux/defex.h>
+#endif
+
 static void __unhash_process(struct task_struct *p, bool group_dead)
 {
 	nr_threads--;
@@ -517,10 +521,7 @@ static void exit_mm(void)
 		up_read(&mm->mmap_sem);
 
 		self.task = current;
-		if (self.task->flags & PF_SIGNALED)
-			self.next = xchg(&core_state->dumper.next, &self);
-		else
-			self.task = NULL;
+		self.next = xchg(&core_state->dumper.next, &self);
 		/*
 		 * Implies mb(), the result of xchg() must be visible
 		 * to core_state->dumper.
@@ -581,6 +582,10 @@ static struct task_struct *find_child_reaper(struct task_struct *father,
 	}
 
 	write_unlock_irq(&tasklist_lock);
+	if (unlikely(pid_ns == &init_pid_ns)) {
+		panic("Attempted to kill init! exitcode=0x%08x\n",
+			father->signal->group_exit_code ?: father->exit_code);
+	}
 
 	list_for_each_entry_safe(p, n, dead, ptrace_entry) {
 		list_del_init(&p->ptrace_entry);
@@ -769,18 +774,17 @@ static void check_stack_usage(void)
 #else
 static inline void check_stack_usage(void) {}
 #endif
-
 void __noreturn do_exit(long code)
 {
 	struct task_struct *tsk = current;
 	int group_dead;
 
-	/*
-	 * We can get here from a kernel oops, sometimes with preemption off.
-	 * Start by checking for critical errors.
-	 * Then fix up important state like USER_DS and preemption.
-	 * Then do everything else.
-	 */
+#ifdef CONFIG_SECURITY_DEFEX
+	task_defex_zero_creds(current);
+#endif
+
+	profile_task_exit(tsk);
+	kcov_task_exit(tsk);
 
 	WARN_ON(blk_needs_flush_plug(tsk));
 
@@ -797,16 +801,6 @@ void __noreturn do_exit(long code)
 	 * kernel address.
 	 */
 	set_fs(USER_DS);
-
-	if (unlikely(in_atomic())) {
-		pr_info("note: %s[%d] exited with preempt_count %d\n",
-			current->comm, task_pid_nr(current),
-			preempt_count());
-		preempt_count_set(PREEMPT_ENABLED);
-	}
-
-	profile_task_exit(tsk);
-	kcov_task_exit(tsk);
 
 	ptrace_event(PTRACE_EVENT_EXIT, code);
 
@@ -845,20 +839,19 @@ void __noreturn do_exit(long code)
 	raw_spin_lock_irq(&tsk->pi_lock);
 	raw_spin_unlock_irq(&tsk->pi_lock);
 
+	if (unlikely(in_atomic())) {
+		pr_info("note: %s[%d] exited with preempt_count %d\n",
+			current->comm, task_pid_nr(current),
+			preempt_count());
+		preempt_count_set(PREEMPT_ENABLED);
+	}
+
 	/* sync mm's RSS info before statistics gathering */
 	if (tsk->mm)
 		sync_mm_rss(tsk->mm);
 	acct_update_integrals(tsk);
 	group_dead = atomic_dec_and_test(&tsk->signal->live);
 	if (group_dead) {
-		/*
-		 * If the last thread of global init has exited, panic
-		 * immediately to get a useable coredump.
-		 */
-		if (unlikely(is_global_init(tsk)))
-			panic("Attempted to kill init! exitcode=0x%08x\n",
-				tsk->signal->group_exit_code ?: (int)code);
-
 #ifdef CONFIG_POSIX_TIMERS
 		hrtimer_cancel(&tsk->signal->real_timer);
 		exit_itimers(tsk->signal);
@@ -970,6 +963,14 @@ void
 do_group_exit(int exit_code)
 {
 	struct signal_struct *sig = current->signal;
+
+#ifdef CONFIG_SEC_DEBUG_INIT_EXIT_PANIC
+	if (current->pid == 1) {
+		pr_err("[%s] trap before init(1) group exit, exit_code:%d\n",
+			current->comm, exit_code);
+		panic("Attempted to kill init task group! exitcode=0x%08x\n", exit_code);
+	}
+#endif
 
 	BUG_ON(exit_code & 0x80); /* core dumps don't get here */
 
@@ -1627,9 +1628,10 @@ SYSCALL_DEFINE5(waitid, int, which, pid_t, upid, struct siginfo __user *,
 	if (!infop)
 		return err;
 
-	if (!user_access_begin(VERIFY_WRITE, infop, sizeof(*infop)))
+	if (!access_ok(VERIFY_WRITE, infop, sizeof(*infop)))
 		return -EFAULT;
 
+	user_access_begin();
 	unsafe_put_user(signo, &infop->si_signo, Efault);
 	unsafe_put_user(0, &infop->si_errno, Efault);
 	unsafe_put_user(info.cause, &infop->si_code, Efault);
@@ -1754,9 +1756,10 @@ COMPAT_SYSCALL_DEFINE5(waitid,
 	if (!infop)
 		return err;
 
-	if (!user_access_begin(VERIFY_WRITE, infop, sizeof(*infop)))
+	if (!access_ok(VERIFY_WRITE, infop, sizeof(*infop)))
 		return -EFAULT;
 
+	user_access_begin();
 	unsafe_put_user(signo, &infop->si_signo, Efault);
 	unsafe_put_user(0, &infop->si_errno, Efault);
 	unsafe_put_user(info.cause, &infop->si_code, Efault);
