@@ -206,3 +206,7 @@ obj-$(CONFIG_SENSORS_SSP)	+= sensorhub/
 
 # optics sensor driver
 obj-$(CONFIG_SENSORS_TCS3407)	+= optics/
+
+# Motor
+obj-y                           += motor/
+

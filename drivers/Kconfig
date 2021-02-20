@@ -232,4 +232,6 @@ source "drivers/optics/Kconfig"
 source "drivers/sensorhub/brcm/Kconfig"
 
 source "drivers/vision/Kconfig"
+
+source "drivers/motor/Kconfig"
 endmenu
