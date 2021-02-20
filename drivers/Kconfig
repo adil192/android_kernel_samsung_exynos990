@@ -228,4 +228,6 @@ source "drivers/battery_v2/Kconfig"
 source "drivers/fingerprint/Kconfig"
 
 source "drivers/optics/Kconfig"
+
+source "drivers/sensorhub/brcm/Kconfig"
 endmenu
