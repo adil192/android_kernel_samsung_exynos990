@@ -194,3 +194,6 @@ ifeq ($(CONFIG_BATTERY_SAMSUNG_V2), y)
 else
 	obj-$(CONFIG_BATTERY_SAMSUNG)	+= battery/
 endif
+
+#Fingerprint
+obj-$(CONFIG_SENSORS_FINGERPRINT)       += fingerprint/
