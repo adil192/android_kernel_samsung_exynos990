@@ -197,3 +197,6 @@ endif
 
 #Fingerprint
 obj-$(CONFIG_SENSORS_FINGERPRINT)       += fingerprint/
+
+# optics sensor driver
+obj-$(CONFIG_SENSORS_TCS3407)	+= optics/
