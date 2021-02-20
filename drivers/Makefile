@@ -195,6 +195,9 @@ else
 	obj-$(CONFIG_BATTERY_SAMSUNG)	+= battery/
 endif
 
+# vision driver
+obj-$(CONFIG_VISION_SUPPORT)	+= vision/
+
 #Fingerprint
 obj-$(CONFIG_SENSORS_FINGERPRINT)       += fingerprint/
 

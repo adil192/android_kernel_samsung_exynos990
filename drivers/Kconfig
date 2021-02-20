@@ -230,4 +230,6 @@ source "drivers/fingerprint/Kconfig"
 source "drivers/optics/Kconfig"
 
 source "drivers/sensorhub/brcm/Kconfig"
+
+source "drivers/vision/Kconfig"
 endmenu
