@@ -48,7 +48,7 @@
 /*
  * The nr of bytes of cached data to keep around.
  */
-#define DM_BUFIO_DEFAULT_RETAIN_BYTES   (256 * 1024)
+#define DM_BUFIO_DEFAULT_RETAIN_BYTES   (1024 * 1024)
 
 /*
  * Align buffer writes to this boundary.
@@ -1470,12 +1470,6 @@ sector_t dm_bufio_get_device_size(struct dm_bufio_client *c)
 	return s;
 }
 EXPORT_SYMBOL_GPL(dm_bufio_get_device_size);
-
-struct dm_io_client *dm_bufio_get_dm_io_client(struct dm_bufio_client *c)
-{
-	return c->dm_io;
-}
-EXPORT_SYMBOL_GPL(dm_bufio_get_dm_io_client);
 
 sector_t dm_bufio_get_block_number(struct dm_buffer *b)
 {
