@@ -215,3 +215,5 @@ obj-$(CONFIG_SENSORS_TCS3407)	+= optics/
 # Motor
 obj-y                           += motor/
 
+# mcps module
+obj-$(CONFIG_MCPS)		+= mcps/
