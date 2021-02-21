@@ -29,6 +29,8 @@ source "drivers/mcps/Kconfig"
 
 source "drivers/misc/Kconfig"
 
+source "drivers/muic/Kconfig"
+
 source "drivers/ide/Kconfig"
 
 source "drivers/scsi/Kconfig"
