@@ -221,6 +221,8 @@ source "drivers/slimbus/Kconfig"
 
 source "drivers/energy_model/Kconfig"
 
+source "drivers/bts/Kconfig"
+
 source "drivers/battery/Kconfig"
 
 source "drivers/battery_v2/Kconfig"
