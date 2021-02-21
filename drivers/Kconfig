@@ -234,4 +234,8 @@ source "drivers/sensorhub/brcm/Kconfig"
 source "drivers/vision/Kconfig"
 
 source "drivers/motor/Kconfig"
+
+source "drivers/security/samsung/five_tee_driver/Kconfig"
+
+source "drivers/security/samsung/icdrv/Kconfig"
 endmenu
