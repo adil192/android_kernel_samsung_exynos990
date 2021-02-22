@@ -949,8 +949,8 @@ static char *ovl_get_redirect(struct dentry *dentry, bool abs_redirect)
 
 		buflen -= thislen;
 		memcpy(&buf[buflen], name, thislen);
+		tmp = dget_dlock(d->d_parent);
 		spin_unlock(&d->d_lock);
-		tmp = dget_parent(d);
 
 		dput(d);
 		d = tmp;
@@ -1177,7 +1177,7 @@ static int ovl_rename(struct inode *olddir, struct dentry *old,
 	if (newdentry == trap)
 		goto out_dput;
 
-	if (olddentry->d_inode == newdentry->d_inode)
+	if (WARN_ON(olddentry->d_inode == newdentry->d_inode))
 		goto out_dput;
 
 	err = 0;
