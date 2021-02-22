@@ -3,7 +3,6 @@
  *
  * This code is licenced under the GPL.
  */
-#include <linux/sched/mm.h>
 #include <linux/proc_fs.h>
 #include <linux/smp.h>
 #include <linux/init.h>
@@ -31,6 +30,8 @@
 #include <linux/relay.h>
 #include <linux/slab.h>
 #include <linux/percpu-rwsem.h>
+#include <linux/sec_debug.h>
+#include <linux/sec_perf.h>
 
 #include <trace/events/power.h>
 #define CREATE_TRACE_POINTS
@@ -238,7 +239,9 @@ static bool cpuhp_is_ap_state(enum cpuhp_state state)
 static inline void wait_for_ap_thread(struct cpuhp_cpu_state *st, bool bringup)
 {
 	struct completion *done = bringup ? &st->done_up : &st->done_down;
+	secdbg_dtsk_set_data(DTYPE_CPUHP, (void *)st->thread);
 	wait_for_completion(done);
+	secdbg_dtsk_clear_data();
 }
 
 static inline void complete_ap_thread(struct cpuhp_cpu_state *st, bool bringup)
@@ -494,7 +497,8 @@ static int bringup_wait_for_ap(unsigned int cpu)
 	if (WARN_ON_ONCE((!cpu_online(cpu))))
 		return -ECANCELED;
 
-	/* Unpark the hotplug thread of the target cpu */
+	/* Unpark the stopper thread and the hotplug thread of the target cpu */
+	stop_machine_unpark(cpu);
 	kthread_unpark(st->thread);
 
 	/*
@@ -531,21 +535,6 @@ static int bringup_cpu(unsigned int cpu)
 	if (ret)
 		return ret;
 	return bringup_wait_for_ap(cpu);
-}
-
-static int finish_cpu(unsigned int cpu)
-{
-	struct task_struct *idle = idle_thread_get(cpu);
-	struct mm_struct *mm = idle->active_mm;
-
-	/*
-	 * idle_task_exit() will have switched to &init_mm, now
-	 * clean up any remaining active_mm state.
-	 */
-	if (mm != &init_mm)
-		idle->active_mm = &init_mm;
-	mmdrop(mm);
-	return 0;
 }
 
 /*
@@ -776,10 +765,6 @@ void __init cpuhp_threads_init(void)
 }
 
 #ifdef CONFIG_HOTPLUG_CPU
-#ifndef arch_clear_mm_cpumask_cpu
-#define arch_clear_mm_cpumask_cpu(cpu, mm) cpumask_clear_cpu(cpu, mm_cpumask(mm))
-#endif
-
 /**
  * clear_tasks_mm_cpumask - Safely clear tasks' mm_cpumask for a CPU
  * @cpu: a CPU id
@@ -815,7 +800,7 @@ void clear_tasks_mm_cpumask(int cpu)
 		t = find_lock_task_mm(p);
 		if (!t)
 			continue;
-		arch_clear_mm_cpumask_cpu(cpu, t->mm);
+		cpumask_clear_cpu(cpu, mm_cpumask(t->mm));
 		task_unlock(t);
 	}
 	rcu_read_unlock();
@@ -1067,8 +1052,8 @@ void notify_cpu_starting(unsigned int cpu)
 
 /*
  * Called from the idle task. Wake up the controlling task which brings the
- * hotplug thread of the upcoming CPU up and then delegates the rest of the
- * online bringup to the hotplug thread.
+ * stopper and the hotplug thread of the upcoming CPU up and then delegates
+ * the rest of the online bringup to the hotplug thread.
  */
 void cpuhp_online_idle(enum cpuhp_state state)
 {
@@ -1077,12 +1062,6 @@ void cpuhp_online_idle(enum cpuhp_state state)
 	/* Happens for the boot cpu */
 	if (state != CPUHP_AP_ONLINE_IDLE)
 		return;
-
-	/*
-	 * Unpart the stopper thread before we start the idle loop (and start
-	 * scheduling); this ensures the stopper task is always available.
-	 */
-	stop_machine_unpark(smp_processor_id());
 
 	st->state = CPUHP_AP_ONLINE_IDLE;
 	complete_ap_thread(st, true);
@@ -1208,8 +1187,15 @@ int freeze_secondary_cpus(int primary)
 	for_each_online_cpu(cpu) {
 		if (cpu == primary)
 			continue;
+
+		if (pm_wakeup_pending()) {
+			error = -EBUSY;
+			break;
+		}
 		trace_suspend_resume(TPS("CPU_OFF"), cpu, true);
+		dbg_snapshot_suspend("CPU_OFF", _cpu_down, NULL, cpu, DSS_FLAG_IN);
 		error = _cpu_down(cpu, 1, CPUHP_OFFLINE);
+		dbg_snapshot_suspend("CPU_OFF", _cpu_down, NULL, cpu, DSS_FLAG_OUT);
 		trace_suspend_resume(TPS("CPU_OFF"), cpu, false);
 		if (!error)
 			cpumask_set_cpu(cpu, frozen_cpus);
@@ -1260,7 +1246,9 @@ void enable_nonboot_cpus(void)
 
 	for_each_cpu(cpu, frozen_cpus) {
 		trace_suspend_resume(TPS("CPU_ON"), cpu, true);
+		dbg_snapshot_suspend("CPU_ON", _cpu_up, NULL, cpu, DSS_FLAG_IN);
 		error = _cpu_up(cpu, 1, CPUHP_ONLINE);
+		dbg_snapshot_suspend("CPU_ON", _cpu_up, NULL, cpu, DSS_FLAG_OUT);
 		trace_suspend_resume(TPS("CPU_ON"), cpu, false);
 		if (!error) {
 			pr_info("CPU%d is up\n", cpu);
@@ -1406,7 +1394,7 @@ static struct cpuhp_step cpuhp_hp_states[] = {
 	[CPUHP_BRINGUP_CPU] = {
 		.name			= "cpu:bringup",
 		.startup.single		= bringup_cpu,
-		.teardown.single	= finish_cpu,
+		.teardown.single	= NULL,
 		.cant_stop		= true,
 	},
 	/* Final state before CPU kills itself */
@@ -2097,8 +2085,10 @@ int cpuhp_smt_disable(enum cpuhp_smt_control ctrlval)
 		 */
 		cpuhp_offline_cpu_device(cpu);
 	}
-	if (!ret)
+	if (!ret) {
 		cpu_smt_control = ctrlval;
+		arch_smt_update();
+	}
 	cpu_maps_update_done();
 	return ret;
 }
@@ -2109,6 +2099,7 @@ int cpuhp_smt_enable(void)
 
 	cpu_maps_update_begin();
 	cpu_smt_control = CPU_SMT_ENABLED;
+	arch_smt_update();
 	for_each_present_cpu(cpu) {
 		/* Skip online CPUs and CPUs on offline nodes */
 		if (cpu_online(cpu) || !node_online(cpu_to_node(cpu)))

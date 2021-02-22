@@ -51,6 +51,7 @@
 #include <linux/timer.h>
 #include <linux/freezer.h>
 #include <linux/compat.h>
+#include <linux/debug-snapshot.h>
 
 #include <linux/uaccess.h>
 
@@ -955,8 +956,7 @@ static int enqueue_hrtimer(struct hrtimer *timer,
 
 	base->cpu_base->active_bases |= 1 << base->index;
 
-	/* Pairs with the lockless read in hrtimer_is_queued() */
-	WRITE_ONCE(timer->state, HRTIMER_STATE_ENQUEUED);
+	timer->state = HRTIMER_STATE_ENQUEUED;
 
 	return timerqueue_add(&base->active, &timer->node);
 }
@@ -978,8 +978,7 @@ static void __remove_hrtimer(struct hrtimer *timer,
 	struct hrtimer_cpu_base *cpu_base = base->cpu_base;
 	u8 state = timer->state;
 
-	/* Pairs with the lockless read in hrtimer_is_queued() */
-	WRITE_ONCE(timer->state, newstate);
+	timer->state = newstate;
 	if (!(state & HRTIMER_STATE_ENQUEUED))
 		return;
 
@@ -1004,9 +1003,8 @@ static void __remove_hrtimer(struct hrtimer *timer,
 static inline int
 remove_hrtimer(struct hrtimer *timer, struct hrtimer_clock_base *base, bool restart)
 {
-	u8 state = timer->state;
-
-	if (state & HRTIMER_STATE_ENQUEUED) {
+	if (hrtimer_is_queued(timer)) {
+		u8 state = timer->state;
 		int reprogram;
 
 		/*
@@ -1398,7 +1396,9 @@ static void __run_hrtimer(struct hrtimer_cpu_base *cpu_base,
 	 */
 	raw_spin_unlock_irqrestore(&cpu_base->lock, flags);
 	trace_hrtimer_expire_entry(timer, now);
+	dbg_snapshot_hrtimer(timer, now, fn, DSS_FLAG_IN);
 	restart = fn(timer);
+	dbg_snapshot_hrtimer(timer, now, fn, DSS_FLAG_OUT);
 	trace_hrtimer_expire_exit(timer);
 	raw_spin_lock_irq(&cpu_base->lock);
 
@@ -1821,6 +1821,9 @@ int hrtimers_prepare_cpu(unsigned int cpu)
 	cpu_base->softirq_next_timer = NULL;
 	cpu_base->expires_next = KTIME_MAX;
 	cpu_base->softirq_expires_next = KTIME_MAX;
+
+	restore_pcpu_tick(cpu);
+
 	return 0;
 }
 
@@ -1862,6 +1865,7 @@ int hrtimers_dead_cpu(unsigned int scpu)
 	int i;
 
 	BUG_ON(cpu_online(scpu));
+	save_pcpu_tick(scpu);
 	tick_cancel_sched_timer(scpu);
 
 	/*

@@ -73,6 +73,10 @@
 #include <asm/io.h>
 #include <asm/unistd.h>
 
+#ifdef CONFIG_SECURITY_DEFEX
+#include <linux/defex.h>
+#endif
+
 #include "uid16.h"
 
 #ifndef SET_UNALIGN_CTL
@@ -807,6 +811,11 @@ long __sys_setfsuid(uid_t uid)
 	if (!uid_valid(kuid))
 		return old_fsuid;
 
+#ifdef CONFIG_SECURITY_DEFEX
+	if (task_defex_enforce(current, NULL, -__NR_setfsuid))
+		return old_fsuid;
+#endif
+
 	new = prepare_creds();
 	if (!new)
 		return old_fsuid;
@@ -850,6 +859,11 @@ long __sys_setfsgid(gid_t gid)
 	kgid = make_kgid(old->user_ns, gid);
 	if (!gid_valid(kgid))
 		return old_fsgid;
+
+#ifdef CONFIG_SECURITY_DEFEX
+	if (task_defex_enforce(current, NULL, -__NR_setfsgid))
+		return old_fsgid;
+#endif
 
 	new = prepare_creds();
 	if (!new)
@@ -1277,12 +1291,10 @@ SYSCALL_DEFINE1(uname, struct old_utsname __user *, name)
 
 SYSCALL_DEFINE1(olduname, struct oldold_utsname __user *, name)
 {
-	struct oldold_utsname tmp;
+	struct oldold_utsname tmp = {};
 
 	if (!name)
 		return -EFAULT;
-
-	memset(&tmp, 0, sizeof(tmp));
 
 	down_read(&uts_sem);
 	memcpy(&tmp.sysname, &utsname()->sysname, __OLD_UTS_LEN);
