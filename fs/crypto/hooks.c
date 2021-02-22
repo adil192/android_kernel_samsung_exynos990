@@ -49,8 +49,7 @@ int fscrypt_file_open(struct inode *inode, struct file *filp)
 }
 EXPORT_SYMBOL_GPL(fscrypt_file_open);
 
-int __fscrypt_prepare_link(struct inode *inode, struct inode *dir,
-			   struct dentry *dentry)
+int __fscrypt_prepare_link(struct inode *inode, struct inode *dir)
 {
 	int err;
 
@@ -58,12 +57,8 @@ int __fscrypt_prepare_link(struct inode *inode, struct inode *dir,
 	if (err)
 		return err;
 
-	/* ... in case we looked up no-key name before key was added */
-	if (fscrypt_is_nokey_name(dentry))
-		return -ENOKEY;
-
 	if (!fscrypt_has_permitted_context(dir, inode))
-		return -EXDEV;
+		return -EPERM;
 
 	return 0;
 }
@@ -83,42 +78,37 @@ int __fscrypt_prepare_rename(struct inode *old_dir, struct dentry *old_dentry,
 	if (err)
 		return err;
 
-	/* ... in case we looked up no-key name(s) before key was added */
-	if (fscrypt_is_nokey_name(old_dentry) ||
-	    fscrypt_is_nokey_name(new_dentry))
-		return -ENOKEY;
-
 	if (old_dir != new_dir) {
 		if (IS_ENCRYPTED(new_dir) &&
 		    !fscrypt_has_permitted_context(new_dir,
 						   d_inode(old_dentry)))
-			return -EXDEV;
+			return -EPERM;
 
 		if ((flags & RENAME_EXCHANGE) &&
 		    IS_ENCRYPTED(old_dir) &&
 		    !fscrypt_has_permitted_context(old_dir,
 						   d_inode(new_dentry)))
-			return -EXDEV;
+			return -EPERM;
 	}
 	return 0;
 }
 EXPORT_SYMBOL_GPL(__fscrypt_prepare_rename);
 
-int __fscrypt_prepare_lookup(struct inode *dir, struct dentry *dentry,
-			     struct fscrypt_name *fname)
+int __fscrypt_prepare_lookup(struct inode *dir, struct dentry *dentry)
 {
-	int err = fscrypt_setup_filename(dir, &dentry->d_name, 1, fname);
+	int err = fscrypt_get_encryption_info(dir);
 
-	if (err && err != -ENOENT)
+	if (err)
 		return err;
 
-	if (fname->is_ciphertext_name) {
+	if (fscrypt_has_encryption_key(dir)) {
 		spin_lock(&dentry->d_lock);
-		dentry->d_flags |= DCACHE_ENCRYPTED_NAME;
+		dentry->d_flags |= DCACHE_ENCRYPTED_WITH_KEY;
 		spin_unlock(&dentry->d_lock);
-		d_set_d_op(dentry, &fscrypt_d_ops);
 	}
-	return err;
+
+	d_set_d_op(dentry, &fscrypt_d_ops);
+	return 0;
 }
 EXPORT_SYMBOL_GPL(__fscrypt_prepare_lookup);
 
