@@ -269,11 +269,9 @@ obj-$(CONFIG_UCS2_STRING) += ucs2_string.o
 obj-$(CONFIG_UBSAN) += ubsan.o
 
 UBSAN_SANITIZE_ubsan.o := n
-KASAN_SANITIZE_ubsan.o := n
-CFLAGS_ubsan.o := $(call cc-option, -fno-stack-protector) $(DISABLE_STACKLEAK_PLUGIN)
 
 obj-$(CONFIG_SBITMAP) += sbitmap.o
-
+obj-$(CONFIG_FFSI) += ffsi.o
 obj-$(CONFIG_PARMAN) += parman.o
 
 # GCC library routines
@@ -283,3 +281,6 @@ obj-$(CONFIG_GENERIC_LIB_LSHRDI3) += lshrdi3.o
 obj-$(CONFIG_GENERIC_LIB_MULDI3) += muldi3.o
 obj-$(CONFIG_GENERIC_LIB_CMPDI2) += cmpdi2.o
 obj-$(CONFIG_GENERIC_LIB_UCMPDI2) += ucmpdi2.o
+
+obj-$(CONFIG_DEBUG_SNAPSHOT) += debug-snapshot.o debug-snapshot-log.o debug-snapshot-utils.o \
+				debug-snapshot-pstore.o debug-snapshot-sysfs.o debug-snapshot-helper.o debug-snapshot-dpm.o
