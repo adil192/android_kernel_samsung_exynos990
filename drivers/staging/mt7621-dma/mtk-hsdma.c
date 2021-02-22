@@ -723,7 +723,7 @@ static int mtk_hsdma_probe(struct platform_device *pdev)
 	ret = dma_async_device_register(dd);
 	if (ret) {
 		dev_err(&pdev->dev, "failed to register dma device\n");
-		goto err_uninit_hsdma;
+		return ret;
 	}
 
 	ret = of_dma_controller_register(pdev->dev.of_node,
@@ -739,8 +739,6 @@ static int mtk_hsdma_probe(struct platform_device *pdev)
 
 err_unregister:
 	dma_async_device_unregister(dd);
-err_uninit_hsdma:
-	mtk_hsdma_uninit(hsdma);
 	return ret;
 }
 
