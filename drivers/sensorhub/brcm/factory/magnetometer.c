@@ -659,9 +659,9 @@ int initialize_magnetic_sensor(struct ssp_data *data)
 	}
 */
 
-    for(i = 0;  i < mag_manager.size; i++)
-        ((mag *)mag_manager.item[i])->initialize(data);
-    
+	for(i = 0;  i < mag_manager.size; i++)
+		((mag *)mag_manager.item[i])->initialize(data);
+
 	ret = set_magnetic_cal_param_to_ssp(data);
 	if (ret < 0)
 		pr_err("[SSP]: %s - set_magnetic_static_matrix failed %d\n", __func__, ret);
@@ -671,12 +671,12 @@ int initialize_magnetic_sensor(struct ssp_data *data)
 
 void initialize_magnetic_factorytest(struct ssp_data *data)
 {
-    memset(&mag_manager, 0, sizeof(mag_manager));
+	memset(&mag_manager, 0, sizeof(mag_manager));
 	push_back(&mag_manager, "DEFAULT", &mag_default);
 #ifdef CONFIG_SENSORS_AK09918C
-    push_back(&mag_manager, "AK09918C", get_mag_ak09918c());
+	push_back(&mag_manager, "AK09918C", get_mag_ak09918c());
 #endif
-    
+
 	sensors_register(data->mag_device, data, mag_attrs, "magnetic_sensor");
 }
 
