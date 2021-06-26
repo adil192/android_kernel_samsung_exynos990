@@ -9795,8 +9795,8 @@ static int zt_ts_probe(struct i2c_client *client,
 
 #ifdef CONFIG_DISPLAY_SAMSUNG
 	lcdtype = get_lcd_attached("GET");
-	if (lcdtype == 0xFFFFFF) {
-		input_err(true, &client->dev, "%s: lcd is not attached\n", __func__);
+	if (lcdtype == 0xFFFFFF || (lcdtype != 0x800042 && lcdtype != 0x800041 && lcdtype != 0x800040)) {
+		input_err(true, &client->dev, "%s: lcd is not attached %X\n", __func__, lcdtype);
 		return -ENODEV;
 	}
 #endif
@@ -9816,8 +9816,8 @@ static int zt_ts_probe(struct i2c_client *client,
 	input_info(true, &client->dev, "%s: lcd is connected\n", __func__);
 
 	lcdtype = get_lcd_info("id");
-	if (lcdtype < 0) {
-		input_err(true, &client->dev, "%s: Failed to get lcd info\n", __func__);
+	if (lcdtype < 0 || (lcdtype != 0x800042 && lcdtype != 0x800041 && lcdtype != 0x800040)) {
+		input_err(true, &client->dev, "%s: Failed to get lcd info %X\n", __func__, lcdtype);
 		return -EINVAL;
 	}
 #endif

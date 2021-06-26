@@ -202,6 +202,10 @@ else
 	obj-$(CONFIG_BATTERY_SAMSUNG)	+= battery/
 endif
 
+# FIVE TEE driver
+obj-$(CONFIG_FIVE_TEE_DRIVER)	+= security/samsung/five_tee_driver/
+obj-$(CONFIG_ICD)		+= security/samsung/icdrv/
+
 # vision driver
 obj-$(CONFIG_VISION_SUPPORT)	+= vision/
 
@@ -223,13 +227,16 @@ obj-y                           += motor/
 # uH
 obj-$(CONFIG_UH)        += uh/
 
+# OLOG
+obj-y				+= kperfmon/
+
 # streamline
 ifeq ($(CONFIG_GATOR), y)
 	obj-$(CONFIG_GATOR)				+= gator/
 endif
 
-# KUnit
-obj-y				+= kunit/
+#TZIC
+obj-y  += security/samsung/tzic/
 
 # SPU signature verify
 obj-$(CONFIG_SPU_VERIFY) += spu_verify/
