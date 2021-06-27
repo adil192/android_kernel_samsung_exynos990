@@ -890,7 +890,6 @@ static ssize_t sensorRGB_store(struct device *dev,
 {
 	struct mdnie_info *mdnie = dev_get_drvdata(dev);
 	unsigned int white_red, white_green, white_blue;
-	int mdnie_mode = mdnie_current_state(mdnie);
 	int ret;
 
 	ret = sscanf(buf, "%u %u %u",
