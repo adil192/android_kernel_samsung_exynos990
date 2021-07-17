@@ -165,7 +165,7 @@ config USB_ANDROID_SAMSUNG_MTP
 	  Provides Media Transfer Protocol (MTP) support
 	  for samsung gadget driver.
 	  If you enable this option,
-	  google mtp will
+	  google mtp will be changed to samsung mtp.
 
 config USB_DUN_SUPPORT
 	bool "DUN support function"
