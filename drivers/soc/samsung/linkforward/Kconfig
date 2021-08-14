@@ -9,3 +9,4 @@ menuconfig LINK_FORWARD
 	  This option enables link layer forwarding using SW translation. This
 	  support IP packet NAT translation. This option can not be used with
 	  DIT(Direct IP Translation) feature (HW_FORWARD).
+
